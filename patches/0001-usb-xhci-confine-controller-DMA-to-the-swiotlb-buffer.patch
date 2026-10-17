@@ -1,0 +1,140 @@
+From 8a5bfdb98a0c2b97db60d4d493363579f1b2c4df Mon Sep 17 00:00:00 2001
+From: muftiomar <pro.omarmufti@gmail.com>
+Date: Sat, 17 Oct 2026 16:29:34 +0200
+Subject: [PATCH] usb: xhci: confine controller DMA to the swiotlb buffer
+
+On the PS5, the Data Fabric refuses device DMA writes to some pages that the
+boot loader still reports as usable System RAM in the e820 map. The refusal is
+logged as a Coherent Station machine check (SMCA HWID 0x2E, MCAType 0x2,
+extended error code 0x02) with EN=0 and PCC=0, so no exception is raised and
+the CPU is untouched. Nothing cancels the transfer: the xHCI controller waits
+for a completion that never arrives, and about 14 seconds later the stack
+unwinds through uas_eh_abort_handler and "HC died" into a read-only root
+filesystem and a frozen machine.
+
+Every failure reports sixteen MCE banks covering exactly one 4 KiB page,
+sliced into 256-byte chunks interleaved across the sixteen Coherent Station
+instances. The page differs between failures and is always below the first
+gigabyte, so the protected memory is scattered rather than contiguous.
+
+Setting swiotlb=force avoids those pages and makes the freeze disappear, but
+it applies to every device and amdgpu does not survive it: the GPU asks for
+single 2 MB mappings while swiotlb caps a mapping at IO_TLB_SEGSIZE * 2 KB =
+256 KB, so no DRM card is registered and the display stays black.
+
+Make the bounce selective. Add a DEV_FLAG_DMA_FORCE_BOUNCE device flag,
+honoured by is_swiotlb_force_bounce() only when a swiotlb buffer actually
+exists, and set it on xHCI controllers at probe. Only streaming mappings are
+redirected; coherent allocations, which have always worked, are untouched.
+USB block I/O is already split into segments of at most 64 KB
+(max_segment_size), well below the per-mapping limit, which is why the USB
+path tolerates what the GPU cannot.
+
+Honouring the flag only when mem->nslabs is non-zero matters: a kernel built
+without a swiotlb buffer degrades to the previous behaviour instead of failing
+every mapping, which would leave the machine unable to reach its root
+filesystem.
+
+Measured on a PS5 fat running Ubuntu 26.04.1 with kernel 7.3.0-rc7-PinkSoup.
+The unmodified kernel failed in under a minute, twice out of twice, logging 64
+Hardware Error lines each time. With this change, 25 GB written and 20 GB read
+produced none, at an unchanged 648-728 MB/s, with the display working.
+
+Not upstream material as it stands: defaulting the flag on for every xHCI
+controller is right for a PS5-only kernel and wrong in general. Upstream would
+want it gated on platform detection.
+---
+ drivers/usb/host/xhci-pci.c | 10 ++++++++++
+ include/linux/device.h      |  5 +++++
+ include/linux/swiotlb.h     | 20 +++++++++++++++++++-
+ 3 files changed, 34 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/usb/host/xhci-pci.c b/drivers/usb/host/xhci-pci.c
+index 1e69098..9ac8605 100644
+--- a/drivers/usb/host/xhci-pci.c
++++ b/drivers/usb/host/xhci-pci.c
+@@ -726,6 +726,13 @@ static const struct pci_device_id pci_ids_prom21[] = {
+ 	{ /* end: all zeroes */ }
+ };
+ 
++static bool force_dma_bounce = true;
++module_param(force_dma_bounce, bool, 0444);
++MODULE_PARM_DESC(force_dma_bounce,
++		 "Confine controller DMA to the swiotlb buffer (PS5: the Data "
++		 "Fabric rejects device writes to some pages the e820 map still "
++		 "reports as usable, which wedges the controller). Default on.");
++
+ static int xhci_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
+ {
+ 	if (IS_ENABLED(CONFIG_USB_XHCI_PCI_RENESAS) &&
+@@ -736,6 +743,9 @@ static int xhci_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
+ 	    pci_match_id(pci_ids_prom21, dev))
+ 		return -ENODEV;
+ 
++	if (force_dma_bounce)
++		dev_set_dma_force_bounce(&dev->dev);
++
+ 	return xhci_pci_common_probe(dev, id);
+ }
+ 
+diff --git a/include/linux/device.h b/include/linux/device.h
+index aee79fd..d795773 100644
+--- a/include/linux/device.h
++++ b/include/linux/device.h
+@@ -599,6 +599,9 @@ struct device_physical_location {
+  *		ancestor device.
+  * @DEV_FLAG_OFFLINE_DISABLED: If set, the device is permanently online.
+  * @DEV_FLAG_OFFLINE: Set after successful invocation of bus type's .offline().
++ * @DEV_FLAG_DMA_FORCE_BOUNCE: Confine this device's streaming DMA to the
++ *		swiotlb buffer. Used on PS5, where the Data Fabric rejects device
++ *		writes to some pages the firmware keeps for itself.
+  * @DEV_FLAG_COUNT: Number of defined struct_device_flags.
+  */
+ enum struct_device_flags {
+@@ -612,6 +615,7 @@ enum struct_device_flags {
+ 	DEV_FLAG_OF_NODE_REUSED = 7,
+ 	DEV_FLAG_OFFLINE_DISABLED = 8,
+ 	DEV_FLAG_OFFLINE = 9,
++	DEV_FLAG_DMA_FORCE_BOUNCE = 10,
+ 
+ 	DEV_FLAG_COUNT
+ };
+@@ -823,6 +827,7 @@ __create_dev_flag_accessors(ready_to_probe, DEV_FLAG_READY_TO_PROBE);
+ __create_dev_flag_accessors(can_match, DEV_FLAG_CAN_MATCH);
+ __create_dev_flag_accessors(dma_iommu, DEV_FLAG_DMA_IOMMU);
+ __create_dev_flag_accessors(dma_skip_sync, DEV_FLAG_DMA_SKIP_SYNC);
++__create_dev_flag_accessors(dma_force_bounce, DEV_FLAG_DMA_FORCE_BOUNCE);
+ __create_dev_flag_accessors(dma_ops_bypass, DEV_FLAG_DMA_OPS_BYPASS);
+ __create_dev_flag_accessors(state_synced, DEV_FLAG_STATE_SYNCED);
+ __create_dev_flag_accessors(dma_coherent, DEV_FLAG_DMA_COHERENT);
+diff --git a/include/linux/swiotlb.h b/include/linux/swiotlb.h
+index 2a42124..cd53fe5 100644
+--- a/include/linux/swiotlb.h
++++ b/include/linux/swiotlb.h
+@@ -180,7 +180,25 @@ static inline bool is_swiotlb_force_bounce(struct device *dev)
+ {
+ 	struct io_tlb_mem *mem = dev->dma_io_tlb_mem;
+ 
+-	return mem && mem->force_bounce;
++	if (!mem)
++		return false;
++
++	/*
++	 * A device may ask for its streaming mappings to be bounced even when
++	 * bouncing is not forced globally. On the PS5 the Data Fabric rejects
++	 * device writes to some pages that the e820 map still reports as
++	 * usable; the rejection raises no exception, so the controller waits
++	 * forever for a completion that never comes. Keeping the transfers
++	 * inside the swiotlb buffer stays clear of those pages.
++	 *
++	 * Honour the flag only when a buffer actually exists, so that a
++	 * kernel built without one degrades to the old behaviour instead of
++	 * failing every mapping.
++	 */
++	if (dev_dma_force_bounce(dev) && mem->nslabs)
++		return true;
++
++	return mem->force_bounce;
+ }
+ 
+ void swiotlb_init(bool addressing_limited, unsigned int flags);

@@ -198,6 +198,35 @@ Add this to the kernel command line:
 xhci_pci.force_dma_bounce=0
 ```
 
+## Two ways to apply it
+
+The change itself is ordinary kernel C -- about twenty lines across three
+files. It ships in both of the formats people expect, and they produce
+byte-for-byte the same result:
+
+**`patches/0001-usb-xhci-confine-controller-DMA-to-the-swiotlb-buffer.patch`**
+is a normal `git format-patch` output. Use it to read the change, to review it,
+or to send it somewhere:
+
+```sh
+cd /path/to/linux
+git apply patches/0001-*.patch        # or: git am patches/0001-*.patch
+```
+
+**`patch-dma-bounce.py`** applies the same change by searching for text
+anchors instead of line numbers. A unified diff carries line numbers, so it
+drifts as soon as the tree is not exactly the one it was generated against --
+and rmux's `linux.patch` has already moved things around. The script verifies
+that each anchor appears exactly once, checks the result afterwards, and
+**refuses to write anything if anything does not match**. It also detects which
+flavour of `struct device` your kernel has. Prefer it if you are applying to a
+tree you did not build yourself:
+
+```sh
+./install.sh --check    # dry run
+./install.sh            # apply
+```
+
 ## What the patch does
 
 Three files, and nothing else:
