@@ -1,0 +1,3 @@
+*.orig-dma
+*.pyc
+__pycache__/

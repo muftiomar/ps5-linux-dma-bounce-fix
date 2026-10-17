@@ -1,0 +1,10 @@
+SPDX-License-Identifier: GPL-2.0
+
+The files this repository patches are part of the Linux kernel, and the patch
+inherits the kernel's licence: GNU General Public License version 2 only.
+
+The scripts in this repository (patch-dma-bounce.py, install.sh,
+tools/reproduce.sh) are released under the same terms.
+
+Full text:      https://www.gnu.org/licenses/old-licenses/gpl-2.0.txt
+Kernel rules:   https://www.kernel.org/doc/html/latest/process/license-rules.html
