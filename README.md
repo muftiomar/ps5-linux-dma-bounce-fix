@@ -116,10 +116,15 @@ load, and the first captured failure on this console came after about forty
 minutes of nothing heavier than a download. The patched kernel passed both
 marks with several hundred times the traffic.
 
-**What is still missing** is a multi-day, boringly normal usage report, and
-confirmation on hardware other than the single console in the table above. If
-you run either, please open an issue — a negative result is just as useful as
-a positive one.
+**Two other people have since applied it and reported the freeze gone.** Their
+hardware is not described here because I do not know it; take it as two
+independent data points rather than coverage.
+
+**What is still missing** is a multi-day, boringly normal usage report, and a
+description of the hardware the patch has worked on beyond the single console
+in the table above. If you try it, please open an issue either way — a negative
+result is just as useful as a positive one, and the hardware details matter
+more than the verdict.
 
 ## Why not just `swiotlb=force`?
 
