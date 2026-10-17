@@ -95,18 +95,31 @@ eight hypotheses that were measured and ruled out first.
 another distribution, not with another kernel branch, not with the drive on a
 rear USB-A port.
 
-**Validation so far is synthetic load, not a long run.** What was measured:
+What was measured, on that one console:
 
 | Kernel | Load survived | `Hardware Error` lines | Display |
 |---|---|---|---|
 | unmodified | **failed in under a minute**, twice out of twice | 64 each time | works |
 | `swiotlb=force` on the command line | 140 GB | 0 | **dead** |
-| this patch | 25 GB written + 20 GB read | 0 | works |
+| this patch | **295 GB written + ~295 GB read in 10 minutes, while a game was downloading** | 0 | works |
 
-Throughput with the patch: 648–728 MB/s, i.e. unchanged.
+The last row is the test that matters. 585 passes of a 512 MB direct-I/O
+write-then-read cycle, running *concurrently* with a game download, sustained
+around 510 MB/s on the storage while the download kept its own 1.3–2.9 MB/s
+throughout. No machine check, no storage error, no `swiotlb buffer is full`, no
+`Salina: event ring appears stuck`, root filesystem still read-write at the
+end, and `/sys/class/drm/` still holding its `card0`. Burst throughput without
+the download competing: 648–728 MB/s, i.e. unchanged from the stock kernel.
 
-A multi-hour real download has **not** been confirmed yet. If you run one,
-please open an issue either way — a negative result is just as useful.
+For scale: the unmodified kernel died in under a minute under that same `dd`
+load, and the first captured failure on this console came after about forty
+minutes of nothing heavier than a download. The patched kernel passed both
+marks with several hundred times the traffic.
+
+**What is still missing** is a multi-day, boringly normal usage report, and
+confirmation on hardware other than the single console in the table above. If
+you run either, please open an issue — a negative result is just as useful as
+a positive one.
 
 ## Why not just `swiotlb=force`?
 
