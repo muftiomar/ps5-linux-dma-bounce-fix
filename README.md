@@ -171,6 +171,26 @@ Add `dwarves` if your config has `CONFIG_DEBUG_INFO_BTF=y`, and
 
 ## Usage
 
+### Where to apply it
+
+**On a kernel source tree.** Not on the `.img`, not on a running system: this
+is kernel C, so it needs a rebuild and a cold boot.
+
+If you built your kernel with rmux's `build.sh`, the tree you want is the one
+that script created or reused -- normally `~/linux`, next to
+`~/ps5-linux-patches`. If you are not sure which directory it is, look for the
+marker `build.sh` leaves inside it:
+
+```sh
+find ~ -maxdepth 3 -name .ci-kernel-ref
+```
+
+`install.sh` finds the tree on its own in the common cases, and prints which
+one it picked before touching anything. If it picks the wrong one, name it with
+`--src`.
+
+### Steps
+
 ```sh
 git clone https://github.com/muftiomar/ps5-linux-dma-bounce-fix
 cd ps5-linux-dma-bounce-fix
@@ -181,9 +201,22 @@ cd ps5-linux-dma-bounce-fix
 ./install.sh --revert         # restore the original files
 ```
 
-The kernel tree is autodetected: the current directory if it is one, otherwise
+Autodetection order: the current directory if it is a kernel tree, otherwise
 `SRC_DIR` from a neighbouring `ps5-linux-patches/build.cfg`, otherwise
 `~/linux`. Override with `--src /path/to/linux`.
+
+Patching the source changes nothing by itself. Build afterwards, which on the
+PS5 image means:
+
+```sh
+cd ~/ps5-linux-patches && ./build.sh
+```
+
+That rebuild takes roughly half an hour on the console and deploys the new
+kernel itself, keeping your previous `bzImage` and `initrd.img` in
+`/boot/efi-backup/<timestamp>/`. Then **cold boot**: rebooting from inside
+Linux hands control back to the PS5 firmware, so you have to redo the
+jailbreak and reload the loader.
 
 With `--build`, if rmux's `build.sh` is present it is used, because that is the
 only build path this patch has been validated through: it reuses your current
